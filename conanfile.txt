@@ -1,0 +1,14 @@
+[requires]
+opencv/4.5.5
+onnxruntime/1.16.3
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[options]
+opencv/*:shared=True
+opencv/*:with_gtk=False
+opencv/*:with_qt=False
+opencv/*:with_x11=False
+onnxruntime/*:shared=True 
