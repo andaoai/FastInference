@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 使用 Conan 生成的配置文件
 include(${CMAKE_BINARY_DIR}/conan_toolchain.cmake)
-
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(OpenCV REQUIRED)
 find_package(onnxruntime REQUIRED)
 
