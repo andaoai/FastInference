@@ -2,6 +2,9 @@
 #include <onnxruntime_cxx_api.h>
 #include <iostream>
 #include <chrono>
+#include <cstring>
+#include <climits>    // For PATH_MAX
+#include <unistd.h>   // For realpath on Linux/Unix
 
 class ONNXInference {
 private:
@@ -35,24 +38,24 @@ public:
         }
     }
 
-    std::vector<float> preprocess(const cv::Mat& input) {
+    std::vector<uint16_t> preprocess(const cv::Mat& input) {
         cv::Mat resized;
         cv::resize(input, resized, input_size);
-        cv::Mat float_img;
-        resized.convertTo(float_img, CV_32F, 1.0/255.0);
-        cv::cvtColor(float_img, float_img, cv::COLOR_BGR2RGB);
-        // 这里假设不做归一化，按实际模型需求调整
-        std::vector<float> input_tensor_values(float_img.total() * float_img.channels());
-        std::memcpy(input_tensor_values.data(), float_img.data, input_tensor_values.size() * sizeof(float));
+        cv::Mat rgb_img;
+        cv::cvtColor(resized, rgb_img, cv::COLOR_BGR2RGB);
+        cv::Mat float16_img;
+        rgb_img.convertTo(float16_img, CV_16F, 1.0/255.0);
+        std::vector<uint16_t> input_tensor_values(float16_img.total() * float16_img.channels());
+        std::memcpy(input_tensor_values.data(), float16_img.data, input_tensor_values.size() * sizeof(uint16_t));
         return input_tensor_values;
     }
 
     std::vector<Ort::Value> inference(const cv::Mat& input) {
         auto start = std::chrono::high_resolution_clock::now();
-        std::vector<float> input_tensor_values = preprocess(input);
+        std::vector<uint16_t> input_tensor_values = preprocess(input);
         std::array<int64_t, 4> input_shape{1, 3, input_size.height, input_size.width};
-        // NHWC to NCHW
-        std::vector<float> nchw(input_tensor_values.size());
+        // NHWC to NCHW for float16
+        std::vector<uint16_t> nchw(input_tensor_values.size());
         size_t hw = input_size.height * input_size.width;
         for (size_t h = 0; h < input_size.height; ++h) {
             for (size_t w = 0; w < input_size.width; ++w) {
@@ -62,7 +65,14 @@ public:
             }
         }
         Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        Ort::Value input_tensor = Ort::Value::CreateTensor<float>(memory_info, nchw.data(), nchw.size(), input_shape.data(), input_shape.size());
+        Ort::Value input_tensor = Ort::Value::CreateTensor(
+            memory_info,
+            nchw.data(),
+            nchw.size() * sizeof(uint16_t),
+            input_shape.data(),
+            input_shape.size(),
+            ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16
+        );
 
         // 将 std::string 转换为 const char*
         std::vector<const char*> input_names_char;
@@ -79,17 +89,19 @@ public:
 };
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cout << "Usage: " << argv[0] << " <model_path> <image_path>" << std::endl;
-        return -1;
-    }
+    std::string model_path = "/home/andao/andaoai/FastInference/yolov5n.onnx";
+    std::string image_path = "/home/andao/andaoai/FastInference/1746581949986.jpg";
+
+    if (argc >= 2) model_path = argv[1];
+    if (argc >= 3) image_path = argv[2];
+
     try {
-        cv::Mat image = cv::imread(argv[2]);
+        cv::Mat image = cv::imread(image_path);
         if (image.empty()) {
             std::cerr << "Error: Could not read image." << std::endl;
             return -1;
         }
-        ONNXInference infer(argv[1]);
+        ONNXInference infer(model_path);
         auto outputs = infer.inference(image);
         // 输出第一个输出的 shape
         auto& out = outputs[0];
@@ -98,8 +110,18 @@ int main(int argc, char* argv[]) {
         std::cout << "Output shape: ";
         for (auto s : shape) std::cout << s << " ";
         std::cout << std::endl;
-        cv::imshow("Input Image", image);
-        cv::waitKey(0);
+        
+        // 保存结果图片
+        std::string result_path = "result.jpg";
+        cv::imwrite(result_path, image);
+        
+        // 获取并打印结果图片的完整路径
+        char resolved_path[PATH_MAX];
+        if (realpath(result_path.c_str(), resolved_path) != nullptr) {
+            std::cout << "结果图片已保存至: " << resolved_path << std::endl;
+        } else {
+            std::cout << "结果图片已保存至当前目录: " << result_path << std::endl;
+        }
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return -1;
